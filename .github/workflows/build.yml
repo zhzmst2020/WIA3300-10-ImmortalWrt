@@ -1,4 +1,4 @@
-name: Build WIA3300-10 Pure ImmortalWrt
+name: Check WIA3300-10 Source
 
 on:
   workflow_dispatch:
@@ -9,81 +9,62 @@ env:
   TZ: Asia/Shanghai
 
 jobs:
-  build:
+  check:
     runs-on: ubuntu-22.04
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Initialize environment
-        env:
-          DEBIAN_FRONTEND: noninteractive
+      - name: Install basic tools
         run: |
-          sudo -E apt-get -qq update
-          sudo -E apt-get -qq install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
-          sudo timedatectl set-timezone "$TZ"
+          sudo apt-get update
+          sudo apt-get install -y git
 
-      - name: Clone source code
+      - name: Clone WIA3300-10 source
         run: |
-          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
-          ln -sf $GITHUB_WORKSPACE/openwrt $GITHUB_WORKSPACE/openwrt
+          git clone --depth=1 "$REPO_URL" -b "$REPO_BRANCH" openwrt
 
-      - name: Update feeds
+      - name: Check actual source version
         run: |
           cd openwrt
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
 
-      - name: Load config and customize
-        run: |
-          cd openwrt
-          # 使用仓库自带的设备配置作为基础
-          cp wia3300-10.config .config
-          
-          # 强制关闭 IPv6
-          sed -i 's/CONFIG_IPV6=y/# CONFIG_IPV6 is not set/' .config
-          sed -i 's/CONFIG_KERNEL_IPV6=y/# CONFIG_KERNEL_IPV6 is not set/' .config
-          sed -i 's/CONFIG_PACKAGE_odhcpd-ipv6only=y/# CONFIG_PACKAGE_odhcpd-ipv6only is not set/' .config
-          sed -i 's/CONFIG_PACKAGE_odhcp6c=y/# CONFIG_PACKAGE_odhcp6c is not set/' .config
-          
-          # 确保中文界面
-          echo "CONFIG_LUCI_LANG_zh_Hans=y" >> .config
-          echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-          
-          # 确保 USB 存储相关
-          echo "CONFIG_PACKAGE_kmod-usb-storage=y" >> .config
-          echo "CONFIG_PACKAGE_kmod-usb-storage-extras=y" >> .config
-          echo "CONFIG_PACKAGE_block-mount=y" >> .config
-          echo "CONFIG_PACKAGE_e2fsprogs=y" >> .config
-          
-          # 生成最终配置
-          make defconfig
+          echo "================================"
+          echo "WIA3300-10 SOURCE CHECK"
+          echo "================================"
 
-      - name: Change default IP to 192.168.8.1
-        run: |
-          cd openwrt
-          # 修改默认 LAN IP
-          sed -i 's/192\.168\.1\.1/192.168.8.1/g' package/base-files/files/bin/config_generate
-          # 兼容部分版本可能写在其他位置
-          find package/base-files -type f -exec sed -i 's/192\.168\.1\.1/192.168.8.1/g' {} + 2>/dev/null || true
+          echo ""
+          echo "===== GIT COMMIT ====="
+          git log -1 --oneline
 
-      - name: Download packages
-        run: |
-          cd openwrt
-          make download -j8
+          echo ""
+          echo "===== GIT BRANCH ====="
+          git branch --show-current
 
-      - name: Compile firmware
-        id: compile
-        run: |
-          cd openwrt
-          echo -e "$(nproc) thread compile"
-          make -j$(nproc) || make -j1 V=s
-          echo "status=success" >> $GITHUB_OUTPUT
+          echo ""
+          echo "===== REMOTE ====="
+          git remote -v
 
-      - name: Upload firmware
-        uses: actions/upload-artifact@v4
-        if: steps.compile.outputs.status == 'success'
-        with:
-          name: WIA3300-10-Pure-ImmortalWrt
-          path: openwrt/bin/targets/ramips/mt7621/*skspruce_wia3300-10*
-          retention-days: 15
+          echo ""
+          echo "===== VERSION FILE ====="
+          if [ -f include/version.mk ]; then
+            grep -E 'VERSION_NUMBER|VERSION_CODE|VERSION_NICK|VERSION_REPO' include/version.mk || true
+          fi
+
+          echo ""
+          echo "===== KERNEL VERSION ====="
+          grep -R "KERNEL_PATCHVER" include/ target/ 2>/dev/null | head -20 || true
+
+          echo ""
+          echo "===== APK / OPKG ====="
+          grep -R "apk" include/ target/ 2>/dev/null | head -20 || true
+          grep -R "opkg" include/ target/ 2>/dev/null | head -20 || true
+
+          echo ""
+          echo "===== WIA3300-10 TARGET ====="
+          find target -iname '*wia3300*' -o -iname '*skspruce*' 2>/dev/null | head -50
+
+          echo ""
+          echo "================================"
+          echo "CHECK COMPLETE"
+          echo "================================"
